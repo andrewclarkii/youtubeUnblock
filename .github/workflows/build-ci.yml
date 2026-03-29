@@ -19,7 +19,7 @@ jobs:
       sha: ${{ steps.gh.outputs.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: GH
         id: gh
         env:
@@ -60,6 +60,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           ref: openwrt
       - name: Prepare build
         env:
@@ -124,8 +125,9 @@ jobs:
       options: --user root
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           ref: openwrt
       - name: Initilalize SDK
         id: init_sdk
