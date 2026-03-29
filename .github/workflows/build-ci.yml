@@ -1,17 +1,15 @@
 name: CI
-
 on:
   push:
     branches:
       - main
     paths-ignore:
-      - '.editorconfig'
-      - '.gitignore'
-      - 'LICENSE'
-      - 'README.md'
-  workflow_dispatch:
-  pull_request:
-
+      - .editorconfig
+      - .gitignore
+      - LICENSE
+      - README.md
+  workflow_dispatch: null
+  pull_request: null
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -22,178 +20,39 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: GH
         id: gh
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: |
-          echo "version=$(cat Makefile | grep "PKG_VERSION :=" | sed 's/PKG_VERSION := //')" >> $GITHUB_OUTPUT
+        run: >
+          echo "version=$(cat Makefile | grep "PKG_VERSION :=" | sed 's/PKG_VERSION
+          := //')" >> $GITHUB_OUTPUT
+
           echo "release=$(cat Makefile | grep "PKG_RELEASE :=" | sed 's/PKG_RELEASE := //')" >> $GITHUB_OUTPUT
+
 
           if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
             GITHUB_SHA=$(cat $GITHUB_EVENT_PATH | jq -r .pull_request.head.sha)
           fi
+
           echo "sha=$(echo ${GITHUB_SHA::7})" >> $GITHUB_OUTPUT
+
           cat $GITHUB_OUTPUT
-
-  build-static:
-    needs: prepare
-    name: build ${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [x86_64, x86, aarch64, armhf, armv7]
-        branch: [latest-stable]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up ccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ matrix.arch }}-${{ github.run_id }}
-          restore-keys: ccache-${{ matrix.arch }}-
-
-      - name: Set up Alpine Linux for ${{ matrix.arch }}
-        uses: jirutka/setup-alpine@v1
-        with:
-          arch: ${{ matrix.arch }}
-          branch: ${{ matrix.branch }}
-          packages: >
-            bash build-base ccache coreutils findutils gawk git grep tar wget xz
-            autoconf automake libtool pkgconf linux-headers
-          shell-name: alpine.sh
-
-      - name: Build inside chroot
-        id: build
-        env:
-          ARCH: ${{ matrix.arch }}
-          CCACHE_DIR: ${{ github.workspace }}/.ccache
-          VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE: ${{ needs.prepare.outputs.release }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-        shell: alpine.sh {0}
-        run: |
-          case $ARCH in
-            x86_64)  PLATFORM=x86-64 ;;
-            x86)     PLATFORM=x86 ;;
-            aarch64) PLATFORM=arm64 ;;
-            armhf)   PLATFORM=arm ;;
-            *)       PLATFORM=$ARCH ;;
-          esac
-          make -j$(nproc) CC="ccache gcc -static-libgcc -static" || exit 1
-          strip -s build/youtubeUnblock
-          cp -va build/youtubeUnblock .
-          tar -czvf youtubeUnblock-$VERSION-$RELEASE-$SHA-$PLATFORM-static.tar.gz youtubeUnblock youtubeUnblock.service README.md
-          ccache --show-stats
-
-      - name: Upload artifacts
-        if: steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: youtubeUnblock-static-${{ matrix.arch }}
-          path: ./**/youtubeUnblock*.tar.gz
-
-  build-static-cross:
-    needs: prepare
-    name: build ${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - arch: mips64el
-            tool: mips64el-unknown-linux-musl
-          - arch: mips64
-            tool: mips64-unknown-linux-musl
-          - arch: mipsel
-            tool: mipsel-unknown-linux-musl
-          - arch: mipselsf
-            tool: mipsel-unknown-linux-muslsf
-          - arch: mips
-            tool: mips-unknown-linux-musl
-          - arch: mipssf
-            tool: mips-unknown-linux-muslsf
-          - arch: armv7sf
-            tool: armv7-unknown-linux-musleabi
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up build tools
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: 'musl-cross/musl-cross'
-          TOOL: ${{ matrix.tool }}
-        run: |
-          mkdir -p $HOME/tools
-          gh api repos/$REPO/releases/latest --jq '.tag_name' |\
-            xargs -I{} wget -qO- https://github.com/$REPO/releases/download/{}/$TOOL.tar.xz | tar -C $HOME/tools -xJ || exit 1
-          [ -d "$HOME/tools/$TOOL/bin" ] && echo "$HOME/tools/$TOOL/bin" >> $GITHUB_PATH
-
-      - name: Build
-        id: build
-        env:
-          ARCH: ${{ matrix.arch }}
-          TOOL: ${{ matrix.tool }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE: ${{ needs.prepare.outputs.release }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          make -j$(nproc) \
-            CC="$TOOL-gcc -static-libgcc -static" \
-            LD=$TOOL-ld \
-            AR=$TOOL-ar \
-            NM=$TOOL-nm \
-            STRIP=$TOOL-strip \
-            CROSS_COMPILE_PLATFORM=$TOOL || exit 1
-          $TOOL-strip -s build/youtubeUnblock
-          cp -va build/youtubeUnblock .
-          tar -czvf youtubeUnblock-$VERSION-$RELEASE-$SHA-$ARCH-static.tar.gz youtubeUnblock youtubeUnblock.service README.md
-
-      - name: Upload artifacts
-        if: steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: youtubeUnblock-static-${{ matrix.arch }}
-          path: ./**/youtubeUnblock*.tar.gz
-
   build-openwrt:
     needs: prepare
     runs-on: ubuntu-latest
     strategy:
       matrix:
         branch:
-          - openwrt-24.10
+          - 25.12.2
+        include:
+          - branch: 25.12.2
+            package_extension: apk
         arch:
-          - aarch64_cortex-a53
-          - aarch64_cortex-a72
-          - aarch64_generic
-          - arm_arm1176jzf-s_vfp
-          - arm_arm926ej-s
-          - arm_cortex-a15_neon-vfpv4
-          - arm_cortex-a5_vfpv4
-          - arm_cortex-a7
-          - arm_cortex-a7_neon-vfpv4
-          - arm_cortex-a7_vfpv4
-          - arm_cortex-a8_vfpv3
-          - arm_cortex-a9
-          - arm_cortex-a9_neon
-          - arm_cortex-a9_vfpv3-d16
-          - arm_fa526
-          - arm_xscale
-          - mips64_octeonplus
-          - mips_24kc
-          - mips_4kec
-          - mips_mips32
-          - mipsel_24kc
-          - mipsel_24kc_24kf
-          - mipsel_74kc
-          - mipsel_mips32
-          - x86_64
+          - ramips-mt7620
+          - ramips-mt7621
     container:
       image: openwrt/sdk:${{ matrix.arch }}-${{ matrix.branch }}
       options: --user root
@@ -201,16 +60,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: 'openwrt'
-
+          ref: openwrt
       - name: Prepare build
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE: ${{ needs.prepare.outputs.release }}
           SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          sed -i "s/PKG_REV:=.*$/PKG_REV:=$SHA/;s/PKG_VERSION:=.*$/PKG_VERSION:=$VERSION-$RELEASE-$SHA/" youtubeUnblock/Makefile
-
+        run: >
+          sed -i
+          "s/PKG_REV:=.*$/PKG_REV:=$SHA/;s/PKG_VERSION:=.*$/PKG_VERSION:=$VERSION/;s/PKG_RELEASE:=.*$/PKG_RELEASE:=$RELEASE/;"
+          youtubeUnblock/Makefile
       - name: Initilalize SDK
         id: init_sdk
         env:
@@ -220,7 +79,6 @@ jobs:
         working-directory: /builder
         run: |
           HOME=/builder ./setup.sh
-
       - name: Build packages
         id: build
         env:
@@ -228,43 +86,47 @@ jobs:
           RELEASE: ${{ needs.prepare.outputs.release }}
           SHA: ${{ needs.prepare.outputs.sha }}
         working-directory: /builder
-        run: |
+        run: >
           echo "src-link youtubeUnblock $GITHUB_WORKSPACE" >> feeds.conf
-          cat feeds.conf
-          ./scripts/feeds update youtubeUnblock
-          ./scripts/feeds install -a -p youtubeUnblock
-          make defconfig
-          make package/youtubeUnblock/compile V=s
-          mv $(find ./bin -type f -name 'youtubeUnblock*.ipk') ./youtubeUnblock-$VERSION-$RELEASE-$SHA-${{ matrix.arch }}-${{ matrix.branch }}.ipk
 
+          cat feeds.conf
+
+          ./scripts/feeds update youtubeUnblock
+
+          ./scripts/feeds install -a -p youtubeUnblock
+
+          make defconfig
+
+          make package/youtubeUnblock/compile V=s
+
+          mv $(find ./bin -type f -name "youtubeUnblock*.${{ matrix.package_extension }}") ./youtubeUnblock-$VERSION-$RELEASE-$SHA-${{ matrix.arch }}-${{ matrix.branch }}.${{ matrix.package_extension }}
       - name: Upload packages
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: youtubeUnblock-${{ matrix.branch }}-${{ matrix.arch }}
-          path: /builder/youtubeUnblock*.ipk
+          path: /builder/youtubeUnblock*.${{ matrix.package_extension }}
           if-no-files-found: error
-
   build-openwrt-luci:
     needs: prepare
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        branch:
+          - 25.12.2
+        arch:
+          - x86_64
+        include:
+          - branch: 25.12.2
+            package_extension: apk
     container:
-      image: openwrt/sdk:x86_64-openwrt-24.10
+      image: openwrt/sdk:${{ matrix.arch }}-${{ matrix.branch }}
       options: --user root
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: 'openwrt'
-
-      - name: Prepare build
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE: ${{ needs.prepare.outputs.release }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          sed -i "s/PKG_REV:=.*$/PKG_REV:=$SHA/;s/PKG_VERSION:=.*$/PKG_VERSION:=$VERSION-$RELEASE-$SHA/" youtubeUnblock/Makefile
-
+          ref: openwrt
       - name: Initilalize SDK
         id: init_sdk
         env:
@@ -274,7 +136,6 @@ jobs:
         working-directory: /builder
         run: |
           HOME=/builder ./setup.sh
-
       - name: Build packages
         id: build
         env:
@@ -282,97 +143,24 @@ jobs:
           RELEASE: ${{ needs.prepare.outputs.release }}
           SHA: ${{ needs.prepare.outputs.sha }}
         working-directory: /builder
-        run: |
+        run: >
           echo "src-link youtubeUnblock $GITHUB_WORKSPACE" >> feeds.conf
+
           cat feeds.conf
+
           ./scripts/feeds update youtubeUnblock
+
           ./scripts/feeds install -a -p youtubeUnblock
+
           make defconfig
+
           make package/luci-app-youtubeUnblock/compile V=s
-          mv $(find ./bin -type f -name 'luci-app-youtubeUnblock*.ipk') ./luci-app-youtubeUnblock-$VERSION-$RELEASE-$SHA.ipk
 
+          mv $(find ./bin -type f -name 'luci-app-youtubeUnblock*.${{ matrix.package_extension }}') ./luci-app-youtubeUnblock-$VERSION-$RELEASE-$SHA.${{ matrix.package_extension }}
       - name: Upload packages
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: luci-app-youtubeUnblock
-          path: /builder/luci-app-youtubeUnblock*.ipk
+          name: luci-app-youtubeUnblock-${{ matrix.branch }}
+          path: /builder/luci-app-youtubeUnblock*.${{ matrix.package_extension }}
           if-no-files-found: error
-
-  build-entware:
-    needs: prepare
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch:
-          - aarch64-3.10
-          - armv7-3.2
-          - mips-3.4
-          - mipsel-3.4
-          - x64-3.2
-          - x86-2.6
-          - armv7-2.6
-    container:
-      image: waujito/entware_builder:${{ matrix.arch }}
-      options: --user root
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: 'openwrt'
-
-      - name: Prepare build
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE: ${{ needs.prepare.outputs.release }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          sed -i "s/PKG_REV:=.*$/PKG_REV:=$SHA/;s/PKG_VERSION:=.*$/PKG_VERSION:=$VERSION-$RELEASE-$SHA/" youtubeUnblockEntware/Makefile
-
-      - name: Build packages
-        id: build
-        working-directory: /home/me/Entware
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE: ${{ needs.prepare.outputs.release }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          echo "src-link youtubeUnblock $GITHUB_WORKSPACE" >> feeds.conf
-          cat feeds.conf
-          ./scripts/feeds update youtubeUnblock
-          ./scripts/feeds install -a -p youtubeUnblock
-          echo "CONFIG_PACKAGE_youtubeUnblockEntware=m" | tee -a .config
-          make package/youtubeUnblockEntware/compile V=s
-
-          mv $(find ./bin -type f -name 'youtubeUnblockEntware*.ipk') ./youtubeUnblock-$VERSION-$RELEASE-$SHA-entware-${{ matrix.arch }}.ipk
-
-      - name: Upload packages
-        if: steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: youtubeUnblock-entware-${{ matrix.arch }}
-          path: /home/me/Entware/youtubeUnblock*.ipk
-          if-no-files-found: error
-
-  pre-release:
-    if: github.event_name != 'pull_request' && github.ref_name == 'main'
-    needs: [build-static, build-static-cross, build-openwrt, build-entware, build-openwrt-luci]
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-
-      - name: Upload assets
-        uses: slord399/action-automatic-releases@v1.0.1
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          automatic_release_tag: 'continuous'
-          prerelease: true
-          draft: true
-          title: 'Development build'
-          files: |
-            ./**/youtubeUnblock*.ipk
-            ./**/youtubeUnblock*.tar.gz
-            ./**/luci-app-youtubeUnblock*.ipk
